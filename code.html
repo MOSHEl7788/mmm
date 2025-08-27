@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8" />
+    <title>מנתח קבצי אקסל - Excel File Analyzer</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            direction: rtl;
+            background: #f8f8f8;
+            padding: 20px;
+        }
+        .container {
+            background: #fff;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            max-width: 1200px;
+            margin: auto;
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 20px;
+        }
+        input, select, button {
+            margin: 10px 0;
+            padding: 10px;
+            width: 100%;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-sizing: border-box;
+            transition: border-color 0.3s ease;
+        }
+        input:focus, select:focus, button:focus {
+            border-color: #3498db;
+            outline: none;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        label {
+            display: block;
+            margin-top: 10px;
+            font-weight: bold;
+            color: #34495e;
+        }
+        #vibrationGraph {
+            height: 600px;
+            margin-top: 30px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #fff;
+        }
+        .inline-inputs {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .inline-inputs > div {
+            flex: 1;
+            min-width: 150px;
+        }
+        .buttons-row {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .buttons-row button {
+            flex: 1;
+            min-width: 150px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📊 מנתח קבצי אקסל</h1>
+    <input type="file" id="fileInput" accept=".xlsx, .xls" />
+
+    <div>
+        <label for="graphType">סוג גרף:</label>
+        <select id="graphType">
+            <option value="vibration">גרף רעידות + סל"ד</option>
+            <option value="oil">גרף לחץ שמן + סל"ד</option>
+            <option value="line">גרף קו (VIB + RPM)</option>
+            <option value="scatter">גרף נקודות (VIB + RPM)</option>
+        </select>
+    </div>
+
+    <div class="inline-inputs">
+        <div>
+            <label for="timeStart">התחלת זמן (TIME):</label>
+            <input type="number" id="timeStart" placeholder="לדוגמה: 200" />
+        </div>
+        <div>
+            <label for="timeEnd">סיום זמן (TIME):</label>
+            <input type="number" id="timeEnd" placeholder="לדוגמה: 400" />
+        </div>
+    </div>
+
+    <div class="buttons-row">
+        <button onclick="createGraph()">צור גרף</button>
+        <button onclick="downloadGraph()">📤 הורד גרף כתמונה</button>
+    </div>
+
+    <div id="vibrationGraph"></div>
+</div>
+
+<script>
+let currentFileData = [];
+
+document.getElementById('fileInput').addEventListener('change', handleFile);
+
+function handleFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(event) {
+        const data = new Uint8Array(event.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: "A", defval: null });
+
+        currentFileData = jsonData.slice(6); // שורות מהשביעית והלאה
+        alert("📁 הקובץ נטען בהצלחה. כעת ניתן ליצור גרף.");
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+function extractNumber(cell) {
+    if (cell === null || cell === undefined) return null;
+    const match = String(cell).match(/-?\d+(\.\d+)?/);
+    return match ? parseFloat(match[0]) : null;
+}
+
+function createGraph() {
+    if (!currentFileData.length) {
+        alert("נא לבחור קובץ אקסל תקין קודם.");
+        return;
+    }
+
+    const graphType = document.getElementById('graphType').value;
+    const timeStart = parseFloat(document.getElementById('timeStart').value);
+    const timeEnd = parseFloat(document.getElementById('timeEnd').value);
+
+    // סינון לפי טווח זמן אם הוזן
+    let filteredData = currentFileData;
+    if (!isNaN(timeStart) && !isNaN(timeEnd)) {
+        filteredData = filteredData.filter(row => {
+            const t = extractNumber(row.B);
+            return t !== null && t >= timeStart && t <= timeEnd;
+        });
+    }
+
+    // מיפוי הנתונים מהשורות המסוננות
+    const x = filteredData.map(row => extractNumber(row.B));        // TIME
+    const vibR = filteredData.map(row => extractNumber(row.C));     // VIB - R (עמודה C)
+    const vibL = filteredData.map(row => extractNumber(row.D));     // VIB - L (עמודה D)
+    const rpm = filteredData.map(row => extractNumber(row.E));      // RPM (עמודה E)
+    const oil = filteredData.map(row => extractNumber(row.F));      // לחץ שמן (עמודה F)
+
+    // הגדרת פריסת הגרף
+    const layout = {
+        title: { text: "📊 גרף נתונים מהקובץ", font: { size: 26 } },
+        xaxis: {
+            title: `TIME`,
+            tickfont: { size: 14 },
+            showgrid: true,
+            gridcolor: '#ecf0f1',
+            linecolor: '#bdc3c7',
+            linewidth: 1.5,
+        },
+        yaxis: {
+            title: '',
+            tickfont: { size: 14 },
+            showgrid: true,
+            gridcolor: '#ecf0f1',
+            linecolor: '#bdc3c7',
+            linewidth: 1.5
+        },
+        height: 600,
+        hovermode: "x unified",
+        legend: {
+            x: 0.01,
+            y: 1.05,
+            orientation: 'h',
+            bgcolor: '#ffffff',
+            bordercolor: '#ccc',
+            borderwidth: 1,
+            font: { size: 14 }
+        },
+        margin: { t: 60, r: 60, l: 60, b: 60 },
+        plot_bgcolor: '#ffffff',
+        paper_bgcolor: '#ffffff'
+    };
+
+    let traces = [];
+
+    if (graphType === "vibration") {
+        layout.yaxis.title = "VIB - R, VIB - L (V)";
+        layout.yaxis2 = {
+            title: "RPM",
+            overlaying: 'y',
+            side: 'right',
+            showgrid: false,
+            titlefont: { color: '#2980b9' },
+            tickfont: { color: '#2980b9' }
+        };
+        traces = [
+            { x, y: vibR, mode: 'lines', name: 'VIB - R', line: { color: '#e74c3c', width: 1.5 } },
+            { x, y: vibL, mode: 'lines', name: 'VIB - L', line: { color: '#27ae60', width: 1.5 } },
+            { x, y: rpm, mode: 'lines', name: 'RPM', yaxis: 'y2', line: { color: '#2980b9', width: 1.5 } }
+        ];
+    }
+    else if (graphType === "oil") {
+        layout.yaxis.title = "לחץ שמן (bar)";
+        layout.yaxis2 = {
+            title: "RPM",
+            overlaying: 'y',
+            side: 'right',
+            showgrid: false,
+            titlefont: { color: '#2980b9' },
+            tickfont: { color: '#2980b9' }
+        };
+        traces = [
+            { x, y: oil, mode: 'lines', name: 'לחץ שמן', line: { color: '#d35400', width: 1.5 } },
+            { x, y: rpm, mode: 'lines', name: 'RPM', yaxis: 'y2', line: { color: '#2980b9', width: 1.5 } }
+        ];
+    }
+    else {
+        // line or scatter with VIB and RPM
+        const mode = graphType === "scatter" ? 'markers' : 'lines';
+        layout.yaxis.title = "VIB - R, VIB - L, RPM";
+        traces = [
+            { x, y: rpm, mode, name: 'RPM', line: { color: '#2980b9', width: 1.5 }, marker: { size: 6 } },
+            { x, y: vibR, mode, name: 'VIB - R', line: { color: '#e74c3c', width: 1.5 }, marker: { size: 6 } },
+            { x, y: vibL, mode, name: 'VIB - L', line: { color: '#27ae60', width: 1.5 }, marker: { size: 6 } }
+        ];
+    }
+
+    Plotly.newPlot("vibrationGraph", traces, layout, {responsive: true});
+}
+
+function downloadGraph() {
+    Plotly.downloadImage('vibrationGraph', {format: 'png', filename: 'excel_data_graph'});
+}
+</script>
+</body>
+</html>
